@@ -16,9 +16,8 @@ import {
 
 import { useAuth } from '@/context/AuthContext';
 import { fetchDashboardSummary, readCachedDashboardSummary } from '@/services/dashboardApi';
-import { fetchMerchandise, submitShopCheckout, submitShopCheckoutViaWeb } from '@/services/publicApi';
+import { fetchMerchandise, submitShopCheckout } from '@/services/publicApi';
 
-const GUEST_SESSION_STORAGE_KEY = 'adls.shop.guest_session_id';
 const CHECKOUT_CART_STORAGE_KEY = 'adls.shop.checkout_cart';
 const CHECKOUT_FORM_STORAGE_KEY = 'adls.shop.checkout_form';
 
@@ -69,7 +68,7 @@ function extractMemberCheckoutDetails(source: unknown): MemberCheckoutDetails | 
   if (!source || typeof source !== 'object') return null;
   const record = source as Record<string, unknown>;
 
-  const phone = readStringRecordValue(record, ['contact_phone', 'phone', 'telephone', 'mobile']);
+  const phone = readStringRecordValue(record, ['contact_phone', 'phone', 'phone_number', 'telephone', 'mobile']);
   const email = readStringRecordValue(record, ['contact_email', 'email']);
   const postcode = readStringRecordValue(record, ['delivery_postcode', 'postcode', 'post_code', 'zip']);
   const address = readStringRecordValue(record, [
@@ -303,15 +302,6 @@ export default function ShopCheckoutScreen() {
     });
   }, [formHydrated, contactName, contactPhone, contactEmail, deliveryAddress, deliveryPostcode, postage, agreement]);
 
-  const getOrCreateGuestSessionId = async () => {
-    const existing = await AsyncStorage.getItem(GUEST_SESSION_STORAGE_KEY);
-    if (existing) return existing;
-
-    const generated = `guest-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    await AsyncStorage.setItem(GUEST_SESSION_STORAGE_KEY, generated);
-    return generated;
-  };
-
   const submit = async () => {
     const liveCartItems = cartItems.length > 0 ? cartItems : await loadCartItemsFromStorage();
     if (liveCartItems.length === 0) {
@@ -437,69 +427,22 @@ export default function ShopCheckoutScreen() {
         return;
       }
 
-      if (!isAuthenticated) {
-        await getOrCreateGuestSessionId();
-      }
-
-      const checkoutPayload = {
-        postage,
-        contact_name: contactName.trim(),
-        contact_phone: resolvedContactPhone.trim(),
-        contact_email: resolvedContactEmail.trim(),
-        delivery_address: resolvedDeliveryAddress.trim(),
-        delivery_postcode: resolvedDeliveryPostcode.trim(),
-        agreement,
-      };
-
-      let reference: string;
-      try {
-        const guestSessionId = isAuthenticated ? null : await getOrCreateGuestSessionId();
-        const response = await submitShopCheckout({
-          bearerToken: isAuthenticated ? authToken : null,
-          guestSessionId,
-          payload: {
-            guest_session_id: guestSessionId ?? undefined,
-            ...checkoutPayload,
-            items: checkoutItems,
-          },
-        });
-        reference = response.data.reference;
-      } catch (apiError) {
-        const apiMessage = apiError instanceof Error ? apiError.message.toLowerCase() : '';
-        const shouldRetryViaWeb =
-          !isAuthenticated &&
-          (apiMessage.includes('basket is empty') ||
-            apiMessage.includes('session expired') ||
-            apiMessage.includes('csrf') ||
-            apiMessage.includes('419'));
-
-        if (!shouldRetryViaWeb) {
-          throw apiError;
-        }
-
-        let webResult;
-        try {
-          webResult = await submitShopCheckoutViaWeb({
-            payload: checkoutPayload,
-            items: checkoutItems,
-          });
-        } catch (firstError) {
-          const firstMessage = firstError instanceof Error ? firstError.message.toLowerCase() : '';
-          if (!firstMessage.includes('session expired')) {
-            throw firstError;
-          }
-
-          webResult = await submitShopCheckoutViaWeb({
-            payload: checkoutPayload,
-            items: checkoutItems,
-          });
-        }
-
-        reference = webResult.reference;
-      }
+      const response = await submitShopCheckout({
+        bearerToken: isAuthenticated ? authToken : null,
+        payload: {
+          postage,
+          contact_name: contactName.trim(),
+          contact_phone: resolvedContactPhone.trim(),
+          contact_email: resolvedContactEmail.trim(),
+          delivery_address: resolvedDeliveryAddress.trim(),
+          delivery_postcode: resolvedDeliveryPostcode.trim(),
+          agreement,
+          items: checkoutItems,
+        },
+      });
 
       await AsyncStorage.removeItem(CHECKOUT_CART_STORAGE_KEY);
-      router.replace({ pathname: '/checkout', params: { reference } });
+      router.replace({ pathname: '/checkout', params: { reference: response.data.reference } });
     } catch (submitError) {
       console.error('Checkout submit failed:', submitError);
       const message = submitError instanceof Error ? submitError.message : 'Unable to submit checkout.';

@@ -1,26 +1,23 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useScrollToTop } from '@react-navigation/native';
-import { useNavigation, useRouter } from 'expo-router';
+import { useNavigation } from '@react-navigation/native';
+import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
   Image,
-  KeyboardAvoidingView,
   Modal,
-  Platform,
-  ScrollView,
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
   useWindowDimensions,
 } from 'react-native';
 
 import { useAuth } from '@/context/AuthContext';
-import { ApiMerchandiseItem, fetchMerchandise, submitShopCheckout, toAbsoluteAssetUrl } from '@/services/publicApi';
+import { ApiMerchandiseItem, fetchMerchandise, toAbsoluteAssetUrl } from '@/services/publicApi';
 
 type Product = {
   id: string;
@@ -52,20 +49,7 @@ const hasOwnerMemberShopAccess = (userType?: string | null) => {
   if (!normalized) return true;
   return !['associate', 'associate_member', 'associate-member'].includes(normalized);
 };
-const GUEST_SESSION_STORAGE_KEY = 'adls.shop.guest_session_id';
 const CHECKOUT_CART_STORAGE_KEY = 'adls.shop.checkout_cart';
-
-function buildMissingCheckoutFieldsMessage(fields: string[]) {
-  if (fields.length === 1) {
-    return `Please complete the ${fields[0]} field.`;
-  }
-
-  if (fields.length === 2) {
-    return `Please complete these checkout fields: ${fields[0]} and ${fields[1]}.`;
-  }
-
-  return `Please complete these checkout fields: ${fields.slice(0, -1).join(', ')}, and ${fields[fields.length - 1]}.`;
-}
 
 function parseOptionList(description: string | null | undefined, label: 'size' | 'sizes' | 'colour' | 'colours' | 'color' | 'colors') {
   if (!description) return [] as string[];
@@ -188,7 +172,7 @@ export default function ShopScreen() {
   const router = useRouter();
   const listRef = useRef<FlatList<Product>>(null);
   useScrollToTop(listRef);
-  const { authLoading, isAuthenticated, authUser, authToken, logout } = useAuth();
+  const { authLoading, isAuthenticated, authUser, logout } = useAuth();
   const canAccessRestrictedProducts = isAuthenticated && hasOwnerMemberShopAccess(authUser?.user_type);
   const { width } = useWindowDimensions();
   const isTablet = width >= 900;
@@ -200,29 +184,9 @@ export default function ShopScreen() {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [cartHydrated, setCartHydrated] = useState(false);
   const [showCart, setShowCart] = useState(false);
-  const [showCheckoutForm, setShowCheckoutForm] = useState(false);
-  const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
-  const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [showAddedModal, setShowAddedModal] = useState(false);
   const [addedMessage, setAddedMessage] = useState('');
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
-  const [contactName, setContactName] = useState('');
-  const [contactPhone, setContactPhone] = useState('');
-  const [contactEmail, setContactEmail] = useState('');
-  const [deliveryAddress, setDeliveryAddress] = useState('');
-  const [deliveryPostcode, setDeliveryPostcode] = useState('');
-  const [postage, setPostage] = useState<'small' | 'large' | 'included'>('small');
-  const [agreement, setAgreement] = useState(false);
-
-  useEffect(() => {
-    if (!showCheckoutForm || !isAuthenticated) return;
-    if (!contactName.trim() && authUser?.name) {
-      setContactName(authUser.name);
-    }
-    if (!contactEmail.trim() && authUser?.email) {
-      setContactEmail(authUser.email);
-    }
-  }, [showCheckoutForm, isAuthenticated, authUser, contactName, contactEmail]);
 
   const cartCount = useMemo(
     () => cartItems.reduce((runningCount, item) => runningCount + item.quantity, 0),
@@ -373,27 +337,6 @@ export default function ShopScreen() {
 
   const clearCart = () => setCartItems([]);
 
-  const proceedToCheckout = (reference?: string) => {
-    setShowCheckoutForm(false);
-    clearCart();
-    setTimeout(() => {
-      if (reference) {
-        router.push({ pathname: '/checkout', params: { reference } });
-        return;
-      }
-      router.push('/checkout');
-    }, 250);
-  };
-
-  const getOrCreateGuestSessionId = async () => {
-    const existing = await AsyncStorage.getItem(GUEST_SESSION_STORAGE_KEY);
-    if (existing) return existing;
-
-    const generated = `guest-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    await AsyncStorage.setItem(GUEST_SESSION_STORAGE_KEY, generated);
-    return generated;
-  };
-
   const checkout = async () => {
     if (cartItems.length === 0) return;
     if (authLoading) return;
@@ -406,64 +349,6 @@ export default function ShopScreen() {
   const previewImage = (imageUrl?: string) => {
     if (!imageUrl) return;
     setPreviewImageUrl(imageUrl);
-  };
-
-  const submitCheckout = async () => {
-    const missingFields = [
-      !contactName.trim() ? 'contact name' : null,
-      !contactPhone.trim() ? 'contact phone' : null,
-      !contactEmail.trim() ? 'contact email' : null,
-      !deliveryAddress.trim() ? 'delivery address' : null,
-      !deliveryPostcode.trim() ? 'delivery postcode' : null,
-    ].filter((field): field is string => Boolean(field));
-
-    if (missingFields.length > 0) {
-      const message = buildMissingCheckoutFieldsMessage(missingFields);
-      setCheckoutError(message);
-      Alert.alert('Checkout', message);
-      return;
-    }
-    if (!agreement) {
-      const message = 'Please confirm agreement before submitting.';
-      setCheckoutError(message);
-      Alert.alert('Checkout', message);
-      return;
-    }
-
-    setCheckoutSubmitting(true);
-    setCheckoutError(null);
-
-    try {
-      const guestSessionId = isAuthenticated ? null : await getOrCreateGuestSessionId();
-      const response = await submitShopCheckout({
-        bearerToken: isAuthenticated ? authToken : null,
-        guestSessionId,
-        payload: {
-          guest_session_id: guestSessionId ?? undefined,
-          postage,
-          contact_name: contactName.trim(),
-          contact_phone: contactPhone.trim(),
-          contact_email: contactEmail.trim(),
-          delivery_address: deliveryAddress.trim(),
-          delivery_postcode: deliveryPostcode.trim(),
-          agreement,
-        },
-      });
-
-      proceedToCheckout(response.data.reference);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to submit checkout.';
-      if (message.toLowerCase().includes('basket is empty')) {
-        const basketMessage = 'Unable to submit order: your server basket is empty.';
-        setCheckoutError(basketMessage);
-        Alert.alert('Checkout', basketMessage);
-      } else {
-        setCheckoutError(message);
-        Alert.alert('Checkout', message);
-      }
-    } finally {
-      setCheckoutSubmitting(false);
-    }
   };
 
   useLayoutEffect(() => {
@@ -599,97 +484,6 @@ export default function ShopScreen() {
             </View>
           </View>
         </View>
-      </Modal>
-
-      <Modal
-        animationType="slide"
-        visible={showCheckoutForm}
-        onRequestClose={() => setShowCheckoutForm(false)}
-        transparent>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.keyboardWrap}>
-          <View style={styles.loginOverlay}>
-            <View style={styles.loginCard}>
-              <Text style={styles.loginTitle}>Checkout Details</Text>
-              <Text style={styles.loginSubTitle}>
-                {isAuthenticated ? 'Submitting as member account.' : 'Submitting as guest checkout.'}
-              </Text>
-
-              <ScrollView style={styles.checkoutFormScroll} contentContainerStyle={styles.checkoutFormContent} keyboardShouldPersistTaps="handled">
-                <TextInput
-                  value={contactName}
-                  onChangeText={setContactName}
-                  autoCapitalize="words"
-                  placeholder="Contact name"
-                  style={styles.input}
-                />
-                <TextInput
-                  value={contactPhone}
-                  onChangeText={setContactPhone}
-                  keyboardType="phone-pad"
-                  placeholder="Contact phone"
-                  style={styles.input}
-                />
-                <TextInput
-                  value={contactEmail}
-                  onChangeText={setContactEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  placeholder="Contact email"
-                  style={styles.input}
-                />
-                <TextInput
-                  value={deliveryAddress}
-                  onChangeText={setDeliveryAddress}
-                  placeholder="Delivery address"
-                  multiline
-                  style={[styles.input, styles.addressInput]}
-                />
-                <TextInput
-                  value={deliveryPostcode}
-                  onChangeText={setDeliveryPostcode}
-                  autoCapitalize="characters"
-                  placeholder="Delivery postcode"
-                  style={styles.input}
-                />
-
-                <Text style={styles.formLabel}>Postage</Text>
-                <View style={styles.optionRow}>
-                  {(['small', 'large', 'included'] as const).map((value) => (
-                    <Pressable
-                      key={value}
-                      style={[styles.optionChip, postage === value && styles.optionChipActive]}
-                      onPress={() => setPostage(value)}>
-                      <Text style={[styles.optionText, postage === value && styles.optionTextActive]}>
-                        {value.toUpperCase()}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-
-                <Pressable style={styles.agreementRow} onPress={() => setAgreement((current) => !current)}>
-                  <View style={[styles.checkbox, agreement && styles.checkboxChecked]} />
-                  <Text style={styles.agreementText}>I have read and agree to the Terms and Conditions for service.</Text>
-                </Pressable>
-
-                {checkoutError ? <Text style={styles.loginError}>{checkoutError}</Text> : null}
-              </ScrollView>
-
-              <View style={styles.loginButtons}>
-                <Pressable style={styles.cancelButton} onPress={() => setShowCheckoutForm(false)}>
-                  <Text style={styles.cancelText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.loginButton, checkoutSubmitting && styles.loginButtonDisabled]}
-                  onPress={() => void submitCheckout()}
-                  disabled={checkoutSubmitting}>
-                  <Text style={styles.loginButtonText}>{checkoutSubmitting ? 'Submitting...' : 'Submit Order'}</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
       </Modal>
 
       <Modal

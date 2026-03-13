@@ -436,7 +436,6 @@ export async function fetchLittleShipImageCategories(ship: string) {
 }
 
 export type ShopCheckoutRequest = {
-  guest_session_id?: string;
   postage: 'small' | 'large' | 'included';
   contact_name: string;
   contact_phone: string;
@@ -444,7 +443,7 @@ export type ShopCheckoutRequest = {
   delivery_address: string;
   delivery_postcode: string;
   agreement: boolean;
-  items?: Array<{
+  items: Array<{
     merchandise_id: number;
     quantity: number;
     size?: string;
@@ -477,7 +476,6 @@ export type ShopCheckoutResponse = {
 export async function submitShopCheckout(params: {
   payload: ShopCheckoutRequest;
   bearerToken?: string | null;
-  guestSessionId?: string | null;
 }) {
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -486,9 +484,6 @@ export async function submitShopCheckout(params: {
 
   if (params.bearerToken) {
     headers.Authorization = `Bearer ${params.bearerToken}`;
-  }
-  if (params.guestSessionId) {
-    headers['X-Guest-Session-Id'] = params.guestSessionId;
   }
 
   const response = await fetch(`${ADLS_API_BASE_URL}/shop/checkout`, {
@@ -592,7 +587,7 @@ function extractOrderIdFromUrl(url: string | null | undefined) {
 }
 
 export async function submitShopCheckoutViaWeb(params: {
-  payload: Omit<ShopCheckoutRequest, 'guest_session_id' | 'items'>;
+  payload: Omit<ShopCheckoutRequest, 'items'>;
   items: ShopCheckoutCartItem[];
 }) {
   const cookieJar = new Map<string, string>();

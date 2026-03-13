@@ -3,7 +3,7 @@ import { useRouter } from 'expo-router';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import * as Updates from 'expo-updates';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -17,6 +17,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useFocusEffect, useScrollToTop } from '@react-navigation/native';
 
 import { LoginGate } from '@/components/LoginGate';
 import { orderStatusColors } from '@/components/orderStatusStyles';
@@ -79,6 +80,8 @@ async function prepareProfileImage(asset: ImagePicker.ImagePickerAsset) {
 
 export default function MyShipScreen() {
   const router = useRouter();
+  const scrollRef = useRef<ScrollView>(null);
+  useScrollToTop(scrollRef);
   const { authLoading, isAuthenticated, authUser, authToken, logout } = useAuth();
   const [isUpdating, setIsUpdating] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
@@ -123,6 +126,22 @@ export default function MyShipScreen() {
     }
   };
 
+  const refreshDashboard = async () => {
+    if (!authToken) return;
+    setRefreshingDashboard(true);
+    try {
+      const summary = await fetchDashboardSummary(authToken);
+      setDashboard(summary);
+      setDashboardError(null);
+    } catch (error) {
+      const message =
+        error instanceof ApiRequestError ? error.message : 'Unable to refresh dashboard data. Please try again.';
+      setDashboardError(message);
+    } finally {
+      setRefreshingDashboard(false);
+    }
+  };
+
   useEffect(() => {
     if (!isAuthenticated || !authToken) return;
 
@@ -155,21 +174,12 @@ export default function MyShipScreen() {
     };
   }, [authToken, isAuthenticated]);
 
-  const refreshDashboard = async () => {
-    if (!authToken) return;
-    setRefreshingDashboard(true);
-    try {
-      const summary = await fetchDashboardSummary(authToken);
-      setDashboard(summary);
-      setDashboardError(null);
-    } catch (error) {
-      const message =
-        error instanceof ApiRequestError ? error.message : 'Unable to refresh dashboard data. Please try again.';
-      setDashboardError(message);
-    } finally {
-      setRefreshingDashboard(false);
-    }
-  };
+  useFocusEffect(
+    useCallback(() => {
+      if (!authToken || !isAuthenticated) return;
+      void refreshDashboard();
+    }, [authToken, isAuthenticated]),
+  );
 
   const handleToggleProfilePreference = async (value: boolean) => {
     if (!authToken || !dashboard) return;
@@ -369,6 +379,7 @@ export default function MyShipScreen() {
 
   return (
     <ScrollView
+      ref={scrollRef}
       contentContainerStyle={styles.container}
       refreshControl={<RefreshControl refreshing={refreshingDashboard} onRefresh={() => void refreshDashboard()} />}>
       <View style={styles.heroCard}>
